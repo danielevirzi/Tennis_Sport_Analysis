@@ -920,6 +920,70 @@ class MiniCourt():
         
         return output_frames, ball_landing_heatmaps
     
+    def draw_only_player_heatmap(self, frames, player_distance_heatmaps, selected_player='Lower', color_map=cv2.COLORMAP_HOT, alpha=0.6):
+        """
+        Draw only the player distance heatmap on the mini court.
+        
+        Args:
+            frames (list): List of frames to draw the heatmap on
+            player_distance_heatmaps (list): List of player distance heatmap images
+            selected_player (str): Which part of the court to show - 'Lower' or 'Upper'
+            color_map: OpenCV colormap to use (default: cv2.COLORMAP_HOT)
+            alpha: Transparency level for the heatmap overlay (default: 0.6)
+        
+        Returns:
+            list: List of frames with player heatmap applied
+        """
+        output_frames = []
+        
+        # Get court coordinates
+        court_left_x = int(self.drawing_key_points[0])
+        court_right_x = int(self.drawing_key_points[2])
+        court_top_y = int(self.drawing_key_points[1])
+        court_bottom_y = int(self.drawing_key_points[5])
+        net_y = self.net_y
+        
+        # Court dimensions
+        court_width = court_right_x - court_left_x
+        upper_court_height = net_y - court_top_y
+        lower_court_height = court_bottom_y - net_y
+        
+        # Define court region based on selected_player
+        if selected_player == 'Lower':
+            # If Lower selected, show heatmap in Upper court
+            court_y_start = court_top_y
+            court_y_end = net_y
+            court_height = upper_court_height
+        else:
+            # If Upper selected, show heatmap in Lower court
+            court_y_start = net_y
+            court_y_end = court_bottom_y
+            court_height = lower_court_height
+        
+        for frame_num, frame in enumerate(frames):
+            # Create a copy of the frame
+            player_frame = frame.copy()
+            
+            # Get player heatmap for this frame
+            player_heatmap_img = player_distance_heatmaps[frame_num]
+            
+            # Apply colormap to the player heatmap
+            colored_player_heatmap = cv2.applyColorMap(player_heatmap_img, color_map)
+            
+            # Create a temporary frame with the heatmap region
+            overlay = player_frame.copy()
+            
+            # Resize and place the colored heatmap onto the selected court region
+            resized_heatmap = cv2.resize(colored_player_heatmap, (court_width, court_height))
+            overlay[court_y_start:court_y_end, court_left_x:court_right_x] = resized_heatmap
+            
+            # Blend the overlay with the original frame
+            cv2.addWeighted(overlay, alpha, player_frame, 1-alpha, 0, player_frame)
+            
+            output_frames.append(player_frame)
+        
+        return output_frames
+    
     def draw_score_heatmap(self, frames, player_distance_heatmaps, ball_landing_heatmaps, color_map=cv2.COLORMAP_HOT, alpha=0.6):
         """
         Draw a heatmap representing the score probability on the mini court based on
@@ -1058,6 +1122,159 @@ class MiniCourt():
             output_frames.append(score_frame)
         
         # Return only the output frames
+        return output_frames
+    
+    def draw_only_ball_heatmap(self, frames, player_balls_frames, ball_mini_court_detections, ball_shots_frames_upper, ball_shots_frames_lower, selected_player, radius=20, color_map=cv2.COLORMAP_HOT, alpha=0.6):
+        """
+        Draw only the ball landing heatmap on the mini court without player heatmap.
+        
+        Args:
+            frames (list): List of frames to draw the heatmap on
+            player_balls_frames (list): List of frames with ball landing positions in the opposite court 
+            ball_mini_court_detections (list): List of dictionaries containing ball positions in mini court
+            ball_shots_frames_upper (list): List of frames where upper player hits the ball
+            ball_shots_frames_lower (list): List of frames where lower player hits the ball
+            selected_player (str): Which part of the court to show - 'Lower' or 'Upper'
+            radius (int): Radius of the ball landing area
+            color_map: OpenCV colormap to use (default: cv2.COLORMAP_HOT)
+            alpha: Transparency level for the heatmap overlay (default: 0.6)
+        
+        Returns:
+            list: List of frames with ball heatmap applied
+        """
+        output_frames = []
+
+        # Get the net y-coordinate (dividing line between upper and lower court)
+        net_y = int((self.drawing_key_points[1] + self.drawing_key_points[5]) / 2)
+
+        # Use actual tennis court boundaries from keypoints
+        court_left_x = int(self.drawing_key_points[0])  # Left boundary from top-left corner
+        court_right_x = int(self.drawing_key_points[2])  # Right boundary from top-right corner
+        court_top_y = int(self.drawing_key_points[1])    # Top boundary from top-left corner
+        court_bottom_y = int(self.drawing_key_points[5])  # Bottom boundary from bottom-left corner
+
+        # Define court region based on selected_player
+        if selected_player == 'Lower':
+            # If Lower selected, show heatmap in Upper court
+            court_y_start = court_top_y
+            court_y_end = net_y
+            
+            # Shots from the selected player
+            player_shots = sorted(ball_shots_frames_lower)
+            # Shots from the opponent 
+            opponent_shots = sorted(ball_shots_frames_upper)
+        else:
+            # If Upper selected, show heatmap in Lower court
+            court_y_start = net_y
+            court_y_end = court_bottom_y
+            
+            # Shots from the selected player
+            player_shots = sorted(ball_shots_frames_upper)
+            # Shots from the opponent
+            opponent_shots = sorted(ball_shots_frames_lower)
+
+        # Court dimensions
+        court_width = court_right_x - court_left_x
+        court_height = court_y_end - court_y_start
+        
+        # Create a mapping of which landing to show for each frame
+        frame_to_landing = {}
+        
+        # For each shot from the selected player, determine when to show the heatmap
+        for i, shot_frame in enumerate(player_shots):
+            # Find the next opponent shot (if any)
+            next_opponent_shot = None
+            for opp_shot in opponent_shots:
+                if opp_shot > shot_frame:
+                    next_opponent_shot = opp_shot
+                    break
+            
+            # If there's a next opponent shot, show heatmap from current shot to that shot
+            # Otherwise, show until the end of the video
+            end_frame = next_opponent_shot if next_opponent_shot else len(frames)
+            
+            # Find relevant ball landing after this shot
+            relevant_landing = None
+            for landing_frame in sorted(player_balls_frames):
+                if landing_frame > shot_frame and (next_opponent_shot is None or landing_frame < next_opponent_shot):
+                    # Check if the ball landed in the opponent's court
+                    if landing_frame < len(ball_mini_court_detections):
+                        ball_positions = ball_mini_court_detections[landing_frame]
+                        for _, position in ball_positions.items():
+                            y = position[1]
+                            if court_y_start <= y <= court_y_end:
+                                relevant_landing = landing_frame
+                                break
+                    if relevant_landing:
+                        break
+            
+            # If we found a landing, assign it to all frames between the shot and next shot
+            if relevant_landing:
+                for frame_idx in range(shot_frame, end_frame):
+                    frame_to_landing[frame_idx] = relevant_landing
+
+        # Process each frame
+        for frame_num, frame in enumerate(frames):
+            # Create a copy of the frame
+            ball_frame = frame.copy()
+            
+            # Create a blank heatmap image (will be filled or left black)
+            heatmap_img = np.zeros((court_height, court_width, 3), dtype=np.uint8)
+            
+            # Check if this frame should show a heatmap
+            if frame_num in frame_to_landing:
+                landing_frame = frame_to_landing[frame_num]
+                
+                # Get ball position from the landing frame
+                if landing_frame < len(ball_mini_court_detections):
+                    ball_positions = ball_mini_court_detections[landing_frame]
+                    
+                    for _, position in ball_positions.items():
+                        x, y = position
+                        
+                        # Check if the ball is inside the selected court area
+                        if court_y_start <= y <= court_y_end:
+                            # Adjust ball coordinates to be relative to the heatmap
+                            rel_x = int(x) - court_left_x
+                            rel_y = int(y) - court_y_start
+                            
+                            # Ensure coordinates are within bounds
+                            if 0 <= rel_x < court_width and 0 <= rel_y < court_height:
+                                # Create coordinate grids for the court area
+                                y_coords, x_coords = np.ogrid[:court_height, :court_width]
+                                
+                                # Calculate Euclidean distance using vectorization
+                                ball_distance = np.sqrt((x_coords - rel_x)**2 + (y_coords - rel_y)**2)
+                                
+                                # Create a mask for the ball's distance using ball landing area
+                                distance_mask = ball_distance >= radius
+                                
+                                # Normalize distance to range 0-255 (inverted so closer is brighter)
+                                ball_intensity = 255 * (1 - ball_distance / max(radius * 2, 1))
+                                ball_intensity = np.clip(ball_intensity, 0, 255)
+                                
+                                # Update the heatmap image with the ball intensity
+                                heatmap_img[:, :, 0] = ball_intensity
+                                heatmap_img[:, :, 1] = ball_intensity
+                                heatmap_img[:, :, 2] = ball_intensity
+                                
+                                # Apply the mask to zero out areas outside the radius
+                                heatmap_img[distance_mask] = 0
+                
+                # Apply the colormap to the final heatmap
+                colored_heatmap = cv2.applyColorMap(heatmap_img.astype(np.uint8), color_map)
+                
+                # Create a temporary frame with the heatmap region
+                overlay = ball_frame.copy()
+                
+                # Place the colored_heatmap onto the selected court region
+                overlay[court_y_start:court_y_end, court_left_x:court_right_x] = colored_heatmap
+                
+                # Blend the overlay with the original frame
+                cv2.addWeighted(overlay, alpha, ball_frame, 1 - alpha, 0, ball_frame)
+            
+            output_frames.append(ball_frame)
+        
         return output_frames
 
 

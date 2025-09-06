@@ -186,6 +186,33 @@ def remove_outliers_final(ball_track, thresh = 150, consecutive_frames = 3):
     return ball_track
 
 
+def convert_yolo_to_tracknet_format(ball_detections_yolo):
+    """
+    Convert YOLO ball detections format to TrackNet format for use with write_track.
+    
+    Args:
+        ball_detections_yolo: List of dictionaries where each dict has keys as track IDs 
+                            and values as bounding boxes [x1, y1, x2, y2]
+    
+    Returns:
+        ball_track: List of tuples (x, y) representing ball center coordinates,
+                   or (None, None) if no ball detected in that frame
+    """
+    ball_track = []
+    
+    for frame_dict in ball_detections_yolo:
+        if frame_dict and 1 in frame_dict:
+            # Get bounding box coordinates
+            x1, y1, x2, y2 = frame_dict[1]
+            # Calculate center point
+            center_x = (x1 + x2) / 2
+            center_y = (y1 + y2) / 2
+            ball_track.append((center_x, center_y))
+        else:
+            # No ball detected in this frame
+            ball_track.append((None, None))
+    
+    return ball_track
 
 
 def write_track(frames, ball_track, ball_shots_frames=[], trace = 7, draw_mode = 'circle'):

@@ -18,7 +18,8 @@ from utils import (read_video,
                    map_court_position_to_player_id,
                    get_ball_shot_frames_visual, 
                    combine_audio_visual,
-                   convert_mp4_to_mp3
+                   convert_mp4_to_mp3,
+                   convert_yolo_to_tracknet_format
                    )
 
 from trackers import (PlayerTracker, BallTrackerNetTRACE, BallTracker)
@@ -43,19 +44,19 @@ def main():
     TRACE = 6 # Set trace to same amount that BounceCNN was trained on (currently : 6)
     
     # Select the player
-    SELECTED_PLAYER = 'Lower' # 'Upper' or 'Lower'
+    SELECTED_PLAYER = 'Upper' # 'Upper' or 'Lower'
     
     # Draw Options
     DRAW_MINI_COURT = True
-    DRAW_STATS_BOX = True
+    DRAW_STATS_BOX = False
     COMPUTE_PROBABILITIES = True  # Whether to compute and draw probabilities on the mini court (can be slow)
 
     # Debugging Mode to use ground truth values for racket hits and ball landings (if available)
     DEBUG = True
-    DRAW_DEBUG_WINDOW = True  # Whether to draw the debug window with all info (can be cluttered)
+    DRAW_DEBUG_WINDOW = False  # Whether to draw the debug window with all info (can be cluttered)
 
     # Video Number to run inference on
-    VIDEO_NUMBER = 101
+    VIDEO_NUMBER = 1008
     print(f"Running inference on video {VIDEO_NUMBER}")
     
     # Insert ground truth values for the racket hits and ball landings for best accuracy
@@ -64,8 +65,8 @@ def main():
     GT_SERVE_PLAYER = None  # 'Upper' or 'Lower' if known, else None
 
     # Video Paths (data/new_input_videos/)
-    INPUT_VIDEO_PATH = f'data/input_video{VIDEO_NUMBER}.mp4'  #
-    INPUT_VIDEO_PATH_AUDIO = f'data/input_video{VIDEO_NUMBER}_audio.mp3'
+    INPUT_VIDEO_PATH = f'data/new_input_videos/input_video_{VIDEO_NUMBER}.mp4'  #
+    INPUT_VIDEO_PATH_AUDIO = f'data/new_input_videos/input_video_{VIDEO_NUMBER}_audio.mp3'
     OUTPUT_VIDEO_PATH = f'output/final/output_video{VIDEO_NUMBER}.mp4'
 
     # Check if we already processed that video by looking if output with video number reference exists (for faster testing)
@@ -135,7 +136,7 @@ def main():
     print(f"Player mapping: Upper is player_{player_position_to_id.get('Upper')}, Lower is player_{player_position_to_id.get('Lower')}")
     print(f"Selected Player : {SELECTED_PLAYER}")
     print(f"Selected Player ID : {player_position_to_id.get(SELECTED_PLAYER)}")
-
+ 
     # Initialize Mini Court
     mini_court = MiniCourt(video_frames[0])
 
@@ -261,6 +262,11 @@ def main():
             case 116:
                 GT_RACKET_HITS_FRAMES = [1, 22, 62]
                 GT_BOUNCES_FRAMES = [13, 52, 82]
+                GT_SERVE_PLAYER = 'Upper'
+                
+            case 1008:
+                GT_RACKET_HITS_FRAMES = [7, 25, 61, 89, 118, 146, 179]
+                GT_BOUNCES_FRAMES = [17, 48, 79, 109, 138, 172, 201]
                 GT_SERVE_PLAYER = 'Upper'
 
             
@@ -530,6 +536,8 @@ def main():
     output_frames = player_tracker.draw_ellipse_bboxes(video_frames, player_detections, SELECTED_PLAYER, player_position_to_id)
 
     # Draw Ball Detection
+    # Convert YOLO format to TrackNet format for write_track function
+    #ball_track_converted = convert_yolo_to_tracknet_format(ball_detections_YOLO)
     output_frames = write_track(video_frames, ball_detections_tracknet)
 
     # Draw keypoints, according to the first frame
@@ -547,9 +555,8 @@ def main():
             _, player_distance_heatmaps = mini_court.draw_player_distance_heatmap(output_frames, player_mini_court_detections, selected_player=SELECTED_PLAYER)
             
             # Compute score prediction and probability for each ball shot
-            
             output_frames = mini_court.draw_score_heatmap(output_frames, ball_landing_heatmaps, player_distance_heatmaps)
-
+            
             # Draw the trajectories of the ball on the mini court
             output_frames = mini_court.draw_shot_trajectories(output_frames, player_mini_court_detections, ball_mini_court_detections, ball_landing_frames_stats, ball_shots_frames_stats, serve_player=serve_player)     
         else:
